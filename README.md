@@ -45,19 +45,19 @@
 
 ```mermaid
 flowchart TD
-    CSV[上傳主播 CSV] --> PREP[整理主播資料<br/>檢查格式、建立搜尋索引]
-    INPUT[使用者說出需求] --> STATE[LLM 整理需求<br/>偏好、排除、姓名或 PFID]
-    STATE --> WEB{是否提到需要查資料的<br/>角色、作品或流行概念?}
-    WEB -- 是 --> EXPAND[搜尋外部資料<br/>補充概念特徵]
-    WEB -- 否 --> RETRIEVE[同時進行三種搜尋<br/>逐字、標籤與語意]
+    CSV[上傳主播 CSV] --> PREP[整理資料並建立搜尋索引]
+    INPUT[使用者說出需求] --> STATE[LLM 整理偏好、排除與身分]
+    STATE --> WEB{需要查外部概念嗎?}
+    WEB -- 是 --> EXPAND[Web Search 補充概念特徵]
+    WEB -- 否 --> RETRIEVE[逐字、標籤與語意搜尋]
     EXPAND --> RETRIEVE
     PREP --> RETRIEVE
-    RETRIEVE --> CANDIDATE{有姓名、PFID<br/>或標籤命中嗎?}
-    CANDIDATE -- 是 --> RANK[套用排除條件後排序<br/>逐字命中 → 標籤 → 同分比語意]
-    CANDIDATE -- 否 --> SEMANTIC[改用純語意推薦<br/>相似度需達 0.20]
-    RANK --> TOP[顯示 Top 5 主播<br/>與原始推薦證據]
+    RETRIEVE --> CANDIDATE{有身分或標籤命中嗎?}
+    CANDIDATE -- 是 --> RANK[排除後依逐字、標籤、語意排序]
+    CANDIDATE -- 否 --> SEMANTIC[純語意推薦，門檻 0.20]
+    RANK --> TOP[顯示 Top 5 與推薦證據]
     SEMANTIC --> TOP
-    TOP --> SUMMARY[補上推薦摘要<br/>說明為什麼推薦與怎麼選]
+    TOP --> SUMMARY[補上推薦原因與選擇建議]
     TOP --> CONTROL[找相似、換一位、換一批]
     CONTROL -- 重新調整結果 --> TOP
 ```
