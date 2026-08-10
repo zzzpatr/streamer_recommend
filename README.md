@@ -4,22 +4,129 @@
 
 選擇此題是因為資料同時具有多值標籤，以及 `overall_vibe`、`self_description`、`reasons` 等敘述文字，適合展示 Hybrid Retrieval、可解釋排序與 grounded generation。
 
+## 設計理念
+
+### 聊天推薦：明確條件優先，語意負責補充
+
+- **Hybrid Retrieval**：人名與 PFID 使用逐字搜尋，明確偏好使用標籤加權；
+  Embedding 只處理同分與純語意 fallback，不推翻較高的標籤分數。
+- **先推薦、再校正**：不要求先完成問卷或補齊所有欄位。只要目前 State
+  已有可用條件，就先顯示結果，再透過後續對話新增、修改或取消偏好。
+- **可操作的 Feedback loop**：使用者能以喜歡的主播作為「找相似」基準，
+  或使用「換一位／換一批」，形成「快速推薦 → 選擇 → 調整 → 再推薦」。
+- **先顯示結果**：排名完成後先渲染 Top 5，較慢的摘要稍後填回；摘要失敗
+  也不阻擋推薦卡片。
+- **Grounded LLM**：LLM 負責理解輸入與整理摘要，程式負責候選與排名；
+  Web Search 只補充 query，推薦證據仍取自 `reasons` 與 metadata。
+
+### Pairwise Explorer：讓難以描述的偏好從選擇中浮現
+
+- **降低表達門檻**：適合「看到人能選，但很難先說出偏好」的使用者；
+  每輪只需二選一，不必輸入完整需求。
+- **累積弱偏好**：比較勝者與敗者的差異標籤，每五輪更新一次 Top 5，
+  不把單次選擇直接視為永久偏好。
+- **獨立實驗**：定位為 Experimental Prototype，不是聊天推薦的 Feedback，
+  也不修改聊天 Preference State，方便比較兩種互動模式。
+
+### 設計對應的互動範例
+
+| 情境 | 使用者操作 | 系統行為 |
+| --- | --- | --- |
+| 快速開始 | `想找會唱歌的主播` | 立即推薦，不追問未指定欄位 |
+| 多輪校正 | 接著說 `希望更有陪伴感` | 保留歌唱偏好，加入陪伴感並更新 Top 5 |
+| 身分搜尋 | `Eason Lee` 或 `4475935` | 逐字搜尋人名或 PFID，身分命中優先 |
+| 外部概念 | `想找像芙莉蓮的主播` | 必要時用 Web Search 補充 query，再做語意搜尋 |
+| 結果調整 | 點擊 `找相似` 或 `換一位` | 使用快取分數更新結果，不寫入永久偏好 |
+| Pairwise 探索 | 每輪選擇較喜歡的一位 | 累積弱偏好，每五輪更新實驗性 Top 5 |
+
 ## 系統流程
+
+### 聊天推薦流程
 
 ```mermaid
 flowchart TD
-    A[Input<br/>自然語言或主播身份] --> B[Data Prepared<br/>驗證、標籤索引、Embedding]
-    B --> C[LLM Structure<br/>更新 Preference State]
-    C --> W{需要外部概念知識?}
-    W -- 是 --> X[Web Search<br/>只擴充語意查詢]
-    W -- 否 --> D[Reasoning<br/>召回、評分、排除、排序]
-    X --> D
-    D --> E[Output<br/>Top 5、證據與摘要]
-    E --> H[Result Controls<br/>換一位、換一批、找相似]
-    H --> D
-    E --> F[Feedback Prototype<br/>獨立二選一偏好探索]
-    F --> G[Pairwise Top 5]
+    CSV[Data Prepared<br/>上傳 CSV] --> V[驗證欄位與 PFID]
+    V --> I[建立標籤倒排索引]
+    V --> SD[組合主播語意文件]
+    SD --> SE[建立並快取主播 Embedding]
+
+    A[Input<br/>自然語言或主播身分] --> LLM[LLM Structure<br/>Structured Outputs]
+    LLM --> SAN[Sanitize<br/>更新完整 Preference State]
+
+    SAN --> LQ[literal_queries<br/>人名、帳號、PFID]
+    LQ --> LS[逐字搜尋<br/>pfid 與 self_description]
+
+    SAN --> P[preferences<br/>正向與排除偏好]
+    I --> TS[倒排索引召回與標籤加權]
+    P --> TS
+
+    SAN --> SQ[semantic_query<br/>抽象感受或外部概念]
+    SQ --> WEB{需要外部知識?}
+    WEB -- 是 --> WX[Web Search<br/>只補充 query 特徵]
+    WEB -- 否 --> CQ[組合結構化與語意查詢]
+    WX --> CQ
+    CQ --> QE[建立 Query Embedding]
+    SE --> VS[計算 cosine similarity]
+    QE --> VS
+
+    LS --> C{有逐字或標籤候選?}
+    TS --> C
+    C -- 是 --> UNION[合併逐字與標籤候選]
+    UNION --> EX[套用排除條件與隱藏 PFID]
+    EX --> SORT[逐字分數 → 標籤分數<br/>→ 語意 tie-breaker → PFID]
+    C -- 否 --> FALLBACK[純語意 fallback<br/>相似度至少 0.20]
+    VS --> SORT
+    VS --> FALLBACK
+    FALLBACK --> EX2[套用排除條件與隱藏 PFID]
+    SORT --> TOP[Output<br/>Top 5 主播卡與 reason 證據]
+    EX2 --> TOP
+    TOP --> SUM[LLM 推薦摘要<br/>比較五位主播差異]
+    TOP --> CTRL[Result Controls<br/>找相似、換一位、換一批]
+    CTRL --> RERANK[沿用既有索引與向量重新排序]
+    RERANK --> TOP
 ```
+
+### Pairwise Explorer 流程
+
+```mermaid
+flowchart LR
+    A[抽取兩位主播] --> B[使用者二選一]
+    B --> C[比較勝者與敗者標籤]
+    C --> D[更新累積偏好權重]
+    D --> E{完成五輪?}
+    E -- 否 --> A
+    E -- 是 --> F[依偏好權重排序全部主播]
+    F --> G[Pairwise Top 5 與推薦摘要]
+    G --> A
+```
+
+## 快速執行
+
+建議使用 Python 3.12：
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+$env:OPENAI_API_KEY="your-api-key"
+streamlit run app.py
+```
+
+執行測試：
+
+```powershell
+python -m unittest discover -v -p "test_*.py"
+```
+
+也可將 API Key 寫入 `.streamlit/secrets.toml`：
+
+```toml
+OPENAI_API_KEY = "your-api-key"
+```
+
+開啟頁面後上傳題目提供的 `anchors_100.csv`。原始 CSV 與題目 PDF 不包含在
+repository 中；若沒有 API Key，Pairwise 排名仍可使用，但聊天推薦與 LLM
+摘要需要 API。
 
 ## 1. Input
 
@@ -39,7 +146,7 @@ flowchart TD
 
 支援多輪新增、修改、取消與排除偏好。未修改的 State 會保留至後續對話。
 
-### 主播身份搜尋
+### 主播身分搜尋
 
 姓名、暱稱、社群帳號與 PFID 使用本地逐字搜尋：
 
@@ -57,7 +164,7 @@ PFID 是 4475935
 
 | 欄位 | 用途 |
 | --- | --- |
-| `pfid` | 主播唯一 ID 與身份搜尋 |
+| `pfid` | 主播唯一 ID 與身分搜尋 |
 | `gender` | 性別軟偏好 |
 | `personality` | 性格定位 |
 | `appearance` | 外型特徵 |
@@ -66,7 +173,7 @@ PFID 是 4475935
 | `live_streaming_style` | 直播互動與內容風格 |
 | `overall_vibe` | 語意搜尋與摘要比較 |
 | `reasons` | 標籤的 JSON 原始證據 |
-| `self_description` | 語意搜尋、身份搜尋與摘要比較 |
+| `self_description` | 語意搜尋、身分搜尋與摘要比較 |
 
 處理流程：
 
@@ -93,7 +200,8 @@ PFID 是 4475935
 
 ## 3. LLM Structure
 
-LLM 不直接決定推薦誰，只負責將每輪訊息更新為完整 Preference State：
+`gpt-5.6-luna` 不直接決定推薦誰，只負責將每輪訊息更新為完整 Preference
+State，並在排名完成後整理摘要：
 
 ```json
 {
@@ -141,7 +249,7 @@ LLM 不直接決定推薦誰，只負責將每輪訊息更新為完整 Preferenc
 
 系統採用逐字搜尋、倒排索引與 Embedding 的 Hybrid Retrieval。
 
-### 4.1 身份逐字搜尋
+### 4.1 身分逐字搜尋
 
 `literal_queries` 只搜尋：
 
@@ -152,18 +260,31 @@ self_description
 
 逐字命中代表使用者正在尋找特定主播，因此排序優先於一般偏好分數。
 
+例如：
+
+| 使用者輸入 | LLM 結構化結果 | 搜尋方式 |
+| --- | --- | --- |
+| `找 Eason Lee` | `literal_queries=["Eason Lee"]` | 在 `self_description` 搜尋人名 |
+| `IG 是 eason_live` | `literal_queries=["eason_live"]` | 在 `self_description` 搜尋社群帳號文字 |
+| `4475935` | `literal_queries=["4475935"]` | 純數字直接視為 PFID，搜尋 `pfid` |
+| `PFID 是 4475935` | `literal_queries=["4475935"]` | 搜尋明確指定的 `pfid` |
+
+目前 CSV 沒有獨立的 IG 或社群帳號欄位，因此帳號必須已出現在
+`self_description` 才能命中。逐字搜尋不支援錯字修正；若輸入的人名或帳號
+不存在，系統會保留查詢條件，但不會產生逐字候選。
+
 ### 4.2 標籤加權
 
 所有正向條件包含性別，都是軟偏好：
 
 | 欄位 | 原始權重 |
 | --- | ---: |
-| 性別 | 0.15 |
+| 性別 | 0.25 |
 | 性格 | 0.15 |
 | 外型 | 0.15 |
-| 才藝 | 0.25 |
-| 直播主題 | 0.20 |
-| 直播風格 | 0.25 |
+| 才藝 | 0.15 |
+| 直播主題 | 0.15 |
+| 直播風格 | 0.15 |
 
 只針對實際啟用欄位重新正規化：
 
@@ -200,17 +321,21 @@ vector_score = clip(normalized_streamer_vector · normalized_query_vector, 0, 1)
 ### 4.5 最終排名
 
 ```text
-literal_score DESC
-tag_score DESC
-vector_score DESC
-pfid ASC
+優先序如下
+逐字搜尋分數（literal_score）DESC
+標籤匹配分數（tag_score）DESC
+語意相似分數（vector_score）DESC
+主播識別碼（pfid）ASC
 ```
 
-- `tag_score` 不同時，語意分數不能推翻較高的標籤分數。
 - `tag_score` 相同時，`vector_score` 作為 tie-breaker。
+- `tag_score` 不同時，語意分數不能推翻較高的標籤分數。
 - 沒有逐字或標籤候選時，純語意結果需達 `0.20` 門檻。
 - 向量搜尋不會補滿不足 Top 5 的標籤結果。
 - `pfid` 只用於最後的穩定排序，不代表主播品質。
+
+結構化標籤負責主要排序，Embedding 負責同分辨識與純語意 fallback；前面的
+互動範例表呈現了各種輸入如何進入這些路徑。
 
 ## 5. Output
 
@@ -249,9 +374,7 @@ Streamlit 會顯示：
 
 ## 6. Feedback
 
-### 聊天推薦結果控制
-
-聊天頁不要求使用者替系統標註喜歡或不喜歡的特徵，而是提供具有立即結果的操作：
+聊天頁提供立即影響結果的操作，不要求使用者額外標註偏好：
 
 | 操作 | 行為 |
 | --- | --- |
@@ -264,9 +387,11 @@ Streamlit 會顯示：
 
 `找相似` 直接取所選主播已建立的向量，與全部主播向量計算 cosine similarity；因此會一起參考結構化欄位、`overall_vibe`、`self_description` 與 `reasons`，不需要重新呼叫 Embedding API。明確的 `excluded_preferences` 仍會套用，但原本正向條件不會壓過相似度排序。
 
-### 二選一偏好探索
+這些操作只影響目前 Session，不會直接推論成永久偏好。
 
-目前提供獨立的「主播二選一偏好探索」Streamlit 分頁，用來測試使用者不知道如何描述偏好時的迭代式推薦。
+## 7. Experimental Prototype
+
+### Pairwise Explorer：二選一偏好探索
 
 每輪顯示兩位差異較大的主播。使用者選擇其中一位後：
 
@@ -276,26 +401,13 @@ Streamlit 會顯示：
 兩位共同標籤：不更新
 ```
 
-加減分會平均分配到該輪的差異標籤，因此標籤較多的主播不會僅因欄位較豐富而取得更多總更新。未選特徵只是弱負向訊號，不會成為硬排除。
+加減分會平均分配到差異標籤，避免欄位較豐富的主播取得較多總更新；未選
+特徵只是弱負向訊號，不是硬排除。第一輪以 Jaccard distance 找差異較大的
+兩位，之後從高分候選中選擇特徵不同的對手。
 
-第一輪使用 Jaccard distance 選擇差異較大的兩位，以增加探索資訊；之後從目前較高分候選中挑選特徵差異較大的對手。探索沒有總輪數限制，每完成第 5、10、15…輪就更新一次結果快照：
-
-- 推測出的較偏好與相對較不偏好特徵。
-- Pairwise score 排序的 Top 5。
-- 與聊天推薦頁共用版型的五張主播卡片，包含自我介紹、才藝、主題、風格與可展開的 `reasons`。
-- 沿用 `result_summary.py` 產生的兩段式推薦摘要。
-- 每輪選擇紀錄。
-
-推測出的正向與弱負向特徵會隨每輪選擇即時顯示在 Pairwise Explorer 的 Sidebar；主畫面保留二選一、推薦摘要與 Top 5。
-
-在兩個里程碑之間會保留上一版 Top 5，使用者可以繼續選擇；達到下一個五輪倍數時才重新排名與生成摘要。摘要使用 pairwise 正負訊號、Top 5 metadata 與 `reasons`，未選特徵只會描述成相對較弱偏好。
-
-這個實驗頁不會修改聊天推薦的 Preference State，方便獨立比較兩種互動模式。主頁上傳過 CSV 後可跨頁共用；也能直接在二選一頁上傳資料。沒有 API Key 時仍可完成二選一排名，摘要改用規則式 fallback。
-
-目前尚未實作跨 Session 使用者檔案或以真實行為資料訓練的 learning-to-rank。後續可加入：
-
-- Pairwise preference data。
-- Precision@K、NDCG@K、換一位率與相似結果點擊率。
+探索不限總輪數。Sidebar 每輪更新推測偏好；第 5、10、15…輪才重新產生
+Top 5 與摘要，兩個里程碑之間保留上一版結果。兩種模式只共用 CSV，不共用
+偏好 State；沒有 API Key 時仍可完成排名，摘要改用規則式 fallback。
 
 ## 專案模組
 
@@ -316,36 +428,6 @@ Streamlit 會顯示：
 | `pages/1_Pairwise_Explorer.py` | 二選一實驗分頁 UI |
 | `prepare_data.py` | 本機離線資料正規化工具 |
 
-## 執行方式
-
-建議使用 Python 3.12。
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
-
-設定 API Key：
-
-```powershell
-$env:OPENAI_API_KEY="your-api-key"
-```
-
-或建立 `.streamlit/secrets.toml`：
-
-```toml
-OPENAI_API_KEY = "your-api-key"
-```
-
-啟動：
-
-```powershell
-streamlit run app.py
-```
-
-開啟頁面後上傳 `anchors_100.csv`，等待記憶體 Embedding 索引完成，再開始輸入推薦需求。
-
 ## API 呼叫與效能
 
 首次上傳每份不同 CSV 時，系統會以 batch 建立全部主播 Embedding，同一 Session 內重複使用。
@@ -354,10 +436,9 @@ streamlit run app.py
 
 1. LLM 更新 Preference State。
 2. 若命中外部實體，額外呼叫一次 Web Search；一般查詢不呼叫。
-3. Embedding API 建立查詢向量。
-4. NumPy 在本機計算 cosine similarity 並完成排名。
-5. Top 5 卡片先顯示。
-6. 額外呼叫一次 LLM 產生推薦摘要。
+3. 若有結構化或語意條件，Embedding API 建立查詢向量；純身分搜尋可略過。
+4. 在本機完成召回、cosine similarity 與排名。
+5. 若有候選，先顯示 Top 5，再呼叫 LLM 產生推薦摘要。
 
 二選一頁的本機配對與排名不需要 API；每完成五輪才呼叫一次 LLM 更新摘要，沒有 API Key 或呼叫失敗時使用規則式 fallback。
 
@@ -397,8 +478,61 @@ AI 工具用於需求拆解、程式實作、重構、Prompt 與 README 草擬�
 
 ## 未來方向
 
-- 姓名與帳號加入高門檻 fuzzy matching 及使用者確認。
-- 為 Web query expansion 建立固定實體測試集，評估觸發 precision、來源品質與推薦排序變化。
-- 將二選一結果與聊天 Preference State 整合，並加入持久化 Feedback。
-- 建立人工 relevance set，以 Precision@K、NDCG@K 校準權重與語意門檻。
-- 資料規模擴大後再考慮持久化 Embedding、向量索引與摘要 cache。
+### 更即時的主播理解
+
+- 除了靜態 metadata，可定期整理主播近期直播標題、ASR 逐字稿與聊天內容，
+  加入主題、語氣、互動方式及內容變化等時間性訊號。
+- 分析聊天室的文字風格，例如問答比例、回覆速度、表情符號、互動熱度與
+  常見話題，補足主播自述和人工標籤無法呈現的實際社群氛圍。
+- 對近期內容使用較高權重並保留時間戳，避免過去的單次直播永久代表主播；
+  聊天內容則應先匿名化與聚合，避免保存不必要的個人訊息。
+
+### 更低門檻的互動方式
+
+- 加入 ASR，讓使用者能直接說出偏好、主播姓名或 PFID，再沿用相同的
+  Structured Outputs 與推薦流程。
+- 使用 TTS 朗讀追問、推薦理由及五位主播的差異，形成可全程語音操作的
+  推薦助理。若要模擬特定主播聲音，則需要另外取得聲音使用授權。
+- 姓名與帳號加入高門檻 fuzzy matching，在可能打錯字時先請使用者確認，
+  不直接以模糊結果覆蓋原查詢。
+
+### 大規模資料的兩階段推薦
+
+目前 131 位主播可以直接在記憶體計算全部 cosine similarity。當資料擴大到
+數萬或數百萬位主播時，可改成：
+
+1. **離線準備**：清理結構化欄位、切分近期內容、建立 Embedding，並以增量
+   工作更新倒排索引、向量索引及主播統計特徵。
+2. **Query 理解**：只對使用者輸入做一次結構化，拆成身分查詢、硬排除、
+   軟偏好與語意查詢。
+3. **多路召回**：以 PFID／帳號索引、結構化標籤、ANN 向量搜尋及行為模型
+   各自取得候選，再合併成數百位主播。只有使用者明確排除的條件才做硬篩選，
+   避免軟偏好過早刪掉相關候選。
+4. **精排**：對縮小後的候選同時計算標籤、語意、近期活躍度、使用者行為與
+   多樣性分數，可使用 learning-to-rank 或 two-tower 模型。
+5. **生成說明**：只將最後 Top 5 的 metadata 與證據交給 LLM 產生摘要，
+   不讓 LLM 掃描整份主播資料。
+
+同時可將主播 Embedding、query 結果及摘要持久化快取，並在主播資料更新時
+只重建受影響的向量，而不是每個 Session 重算全部主播。
+
+### 從真實觀看行為學習關聯性
+
+- 在使用者同意下收集曝光、點擊、觀看時間、追蹤、略過、重複觀看及
+  「換一位／找相似」等 implicit feedback，區分「看過」與「真正喜歡」。
+- 以共同觀看建立 user-streamer interaction matrix 或主播共現圖，使用
+  collaborative filtering、item-to-item retrieval 或 graph embedding 找出
+  metadata 語意之外的主播關聯性。
+- 將內容式推薦用於新主播與新使用者的 cold start；累積足夠觀看紀錄後，
+  再把協同過濾與個人長期偏好加入精排。
+- 將二選一結果視為明確但少量的偏好訊號，與真實觀看行為分開加權，避免
+  幾次測試選擇過度改變長期推薦。
+
+### 評估與可靠性
+
+- 建立人工 relevance set，以 Precision@K、Recall@K、NDCG@K 與 MRR 校準
+  欄位權重、語意門檻及不同召回來源。
+- 使用線上 A/B test 觀察有效觀看時間、追蹤率、略過率、換一位率與推薦
+  多樣性，不只以 cosine similarity 判定效果。
+- 為 Web query expansion 建立固定實體測試集，評估觸發 precision、來源品質
+  與推薦排序變化。

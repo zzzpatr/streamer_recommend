@@ -19,12 +19,12 @@ FIELD_LABELS = {
     "live_streaming_style": "直播風格",
 }
 FIELD_WEIGHTS = {
-    "gender": 0.15,
+    "gender": 0.25,
     "personality": 0.15,
     "appearance": 0.15,
-    "talents": 0.25,
-    "featured_topics": 0.20,
-    "live_streaming_style": 0.25,
+    "talents": 0.15,
+    "featured_topics": 0.15,
+    "live_streaming_style": 0.15,
 }
 REASON_PREFIXES = {
     "gender": None,

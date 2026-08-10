@@ -28,6 +28,7 @@ from streamer_cards import render_streamer_cards
 
 
 RESULT_INTERVAL = 5
+CHOICE_CARD_HEIGHT = 430
 
 
 st.set_page_config(
@@ -87,7 +88,6 @@ def select_streamer(
 
 
 def render_profile(row: pd.Series) -> None:
-    st.markdown(f"### 主播 {row.name}")
     st.write(row["overall_vibe"])
     st.caption(f"性別：{row['gender']}｜性格：{row['personality']}")
     st.caption(f"才藝：{row['talents']}")
@@ -203,15 +203,17 @@ left_id, right_id = st.session_state.pw_current_pair
 indexed = streamers.set_index("pfid")
 left_column, right_column = st.columns(2, gap="large")
 
-with left_column, st.container(border=True):
-    render_profile(indexed.loc[left_id])
+with left_column, st.container(border=True, height=CHOICE_CARD_HEIGHT):
+    st.markdown(f"### 主播 {left_id}")
     if st.button("選這位主播", key=f"choose_{completed_rounds}_{left_id}", width="stretch"):
         select_streamer(left_id, right_id, profiles)
+    render_profile(indexed.loc[left_id])
 
-with right_column, st.container(border=True):
-    render_profile(indexed.loc[right_id])
+with right_column, st.container(border=True, height=CHOICE_CARD_HEIGHT):
+    st.markdown(f"### 主播 {right_id}")
     if st.button("選這位主播", key=f"choose_{completed_rounds}_{right_id}", width="stretch"):
         select_streamer(right_id, left_id, profiles)
+    render_profile(indexed.loc[right_id])
 
 if st.session_state.pw_result_round:
     st.divider()

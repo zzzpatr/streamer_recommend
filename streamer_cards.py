@@ -28,6 +28,13 @@ def _display_tags(tags: list[str]) -> str:
 
 
 def _render_common_profile(row: object) -> None:
+    gender = (
+        str(row.gender).strip()
+        if pd.notna(row.gender) and str(row.gender).strip()
+        else "尚未提供"
+    )
+    st.caption(f"性別：{gender}")
+
     vibe = str(row.overall_vibe).strip()
     st.write(f"{vibe[:77]}..." if len(vibe) > 80 else vibe)
 
@@ -87,21 +94,6 @@ def render_streamer_cards(
     ):
         with column, st.container(border=True, height=CARD_HEIGHT):
             st.markdown(f"#### #{row.rank} 主播 {row.pfid}")
-            if mode == "chat":
-                if row.retrieval_type == "literal_match":
-                    st.metric("逐字命中", f"{row.literal_score:.0%}")
-                else:
-                    st.metric("匹配度", f"{row.match_score:.0%}")
-            else:
-                st.metric("偏好分數", f"{row.pairwise_score:.2f}")
-            _render_common_profile(row)
-            if mode == "chat":
-                _render_chat_details(row)
-            else:
-                _render_pairwise_details(row)
-            st.caption(f"才藝：{row.talents}")
-            st.caption(f"主題：{row.featured_topics}")
-            st.caption(f"風格：{row.live_streaming_style}")
             if mode == "chat" and enable_result_controls:
                 similar_column, replace_column = st.columns(2, gap="small")
                 if similar_column.button(
@@ -119,4 +111,19 @@ def render_streamer_cards(
                     width="stretch",
                 ):
                     result_action = (str(row.pfid), "replace")
+            if mode == "chat":
+                if row.retrieval_type == "literal_match":
+                    st.metric("逐字命中", f"{row.literal_score:.0%}")
+                else:
+                    st.metric("匹配度", f"{row.match_score:.0%}")
+            else:
+                st.metric("偏好分數", f"{row.pairwise_score:.2f}")
+            _render_common_profile(row)
+            if mode == "chat":
+                _render_chat_details(row)
+            else:
+                _render_pairwise_details(row)
+            st.caption(f"才藝：{row.talents}")
+            st.caption(f"主題：{row.featured_topics}")
+            st.caption(f"風格：{row.live_streaming_style}")
     return result_action
