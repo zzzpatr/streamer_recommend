@@ -45,36 +45,45 @@
 
 ```mermaid
 flowchart TD
-    CSV[上傳 CSV] --> PREP[Data Prepared<br/>驗證、標籤索引、主播 Embedding]
-    INPUT[使用者輸入] --> STATE[LLM Structure<br/>更新並清理 Preference State]
-    STATE --> WEB{需要外部知識?}
-    WEB -- 是 --> EXPAND[Web Search<br/>補充語意 query]
-    WEB -- 否 --> RETRIEVE[Hybrid Retrieval<br/>逐字搜尋、標籤、Embedding]
+    CSV[上傳主播 CSV] --> PREP[整理主播資料<br/>檢查格式、建立搜尋索引]
+    INPUT[使用者說出需求] --> STATE[LLM 整理需求<br/>偏好、排除、姓名或 PFID]
+    STATE --> WEB{是否提到需要查資料的<br/>角色、作品或流行概念?}
+    WEB -- 是 --> EXPAND[搜尋外部資料<br/>補充概念特徵]
+    WEB -- 否 --> RETRIEVE[同時進行三種搜尋<br/>逐字、標籤與語意]
     EXPAND --> RETRIEVE
     PREP --> RETRIEVE
-    RETRIEVE --> CANDIDATE{有逐字或標籤候選?}
-    CANDIDATE -- 是 --> RANK[排除條件後排序<br/>逐字 → 標籤 → 語意]
-    CANDIDATE -- 否 --> SEMANTIC[純語意 fallback<br/>門檻 0.20]
-    RANK --> TOP[Top 5 主播卡與 reason 證據]
+    RETRIEVE --> CANDIDATE{有姓名、PFID<br/>或標籤命中嗎?}
+    CANDIDATE -- 是 --> RANK[套用排除條件後排序<br/>逐字命中 → 標籤 → 同分比語意]
+    CANDIDATE -- 否 --> SEMANTIC[改用純語意推薦<br/>相似度需達 0.20]
+    RANK --> TOP[顯示 Top 5 主播<br/>與原始推薦證據]
     SEMANTIC --> TOP
-    TOP --> SUMMARY[LLM 推薦摘要]
+    TOP --> SUMMARY[補上推薦摘要<br/>說明為什麼推薦與怎麼選]
     TOP --> CONTROL[找相似、換一位、換一批]
-    CONTROL -- 本機重排 --> TOP
+    CONTROL -- 重新調整結果 --> TOP
 ```
 
 ### Pairwise Explorer 流程
 
 ```mermaid
 flowchart LR
-    A[抽取兩位主播] --> B[使用者二選一]
-    B --> C[比較差異標籤<br/>更新弱偏好]
-    C --> D{完成五輪?}
-    D -- 否 --> A
-    D -- 是 --> E[更新 Top 5 與摘要]
-    E --> A
+    A[顯示兩位主播] --> B[使用者二選一]
+    B --> C{完成五輪?}
+    C -- 否 --> A
+    C -- 是 --> D[更新 Top 5 與推薦摘要]
+    D --> A
 ```
 
 ## 快速執行
+
+### 線上 Demo
+
+[開啟 Streamlit Community Cloud Demo](https://zzzpatr-streamer-recommend-app-plmn8c.streamlit.app/)
+
+開啟後可直接上傳題目提供的 `anchors_100.csv` 並開始使用。為避免公開面試
+附件，原始 CSV 與 `take-home-assignment.pdf` 均未提交至公開 GitHub；線上
+Demo 也不預載這兩份檔案。
+
+### 本機執行
 
 建議使用 Python 3.12：
 
@@ -98,9 +107,8 @@ python -m unittest discover -v -p "test_*.py"
 OPENAI_API_KEY = "your-api-key"
 ```
 
-開啟頁面後上傳題目提供的 `anchors_100.csv`。原始 CSV 與題目 PDF 不包含在
-repository 中；若沒有 API Key，Pairwise 排名仍可使用，但聊天推薦與 LLM
-摘要需要 API。
+開啟頁面後同樣需要上傳 `anchors_100.csv`。若沒有 API Key，Pairwise 排名
+仍可使用，但聊天推薦與 LLM 摘要需要 API。
 
 ## 1. Input
 
