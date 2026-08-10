@@ -79,9 +79,8 @@ flowchart LR
 
 [開啟 Streamlit Community Cloud Demo](https://zzzpatr-streamer-recommend-app-plmn8c.streamlit.app/)
 
-開啟後可直接上傳題目提供的 `anchors_100.csv` 並開始使用。為避免公開面試
-附件，原始 CSV 與 `take-home-assignment.pdf` 均未提交至公開 GitHub；線上
-Demo 也不預載這兩份檔案。
+開啟後可直接上傳 `anchors_100.csv` 並開始使用。為避免資安風險
+，原始 CSV 與 `take-home-assignment.pdf`,還有 API key 均未提交至公開 GitHub
 
 ### 本機執行
 
