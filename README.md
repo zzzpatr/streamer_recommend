@@ -45,45 +45,21 @@
 
 ```mermaid
 flowchart TD
-    CSV[Data Prepared<br/>上傳 CSV] --> V[驗證欄位與 PFID]
-    V --> I[建立標籤倒排索引]
-    V --> SD[組合主播語意文件]
-    SD --> SE[建立並快取主播 Embedding]
-
-    A[Input<br/>自然語言或主播身分] --> LLM[LLM Structure<br/>Structured Outputs]
-    LLM --> SAN[Sanitize<br/>更新完整 Preference State]
-
-    SAN --> LQ[literal_queries<br/>人名、帳號、PFID]
-    LQ --> LS[逐字搜尋<br/>pfid 與 self_description]
-
-    SAN --> P[preferences<br/>正向與排除偏好]
-    I --> TS[倒排索引召回與標籤加權]
-    P --> TS
-
-    SAN --> SQ[semantic_query<br/>抽象感受或外部概念]
-    SQ --> WEB{需要外部知識?}
-    WEB -- 是 --> WX[Web Search<br/>只補充 query 特徵]
-    WEB -- 否 --> CQ[組合結構化與語意查詢]
-    WX --> CQ
-    CQ --> QE[建立 Query Embedding]
-    SE --> VS[計算 cosine similarity]
-    QE --> VS
-
-    LS --> C{有逐字或標籤候選?}
-    TS --> C
-    C -- 是 --> UNION[合併逐字與標籤候選]
-    UNION --> EX[套用排除條件與隱藏 PFID]
-    EX --> SORT[逐字分數 → 標籤分數<br/>→ 語意 tie-breaker → PFID]
-    C -- 否 --> FALLBACK[純語意 fallback<br/>相似度至少 0.20]
-    VS --> SORT
-    VS --> FALLBACK
-    FALLBACK --> EX2[套用排除條件與隱藏 PFID]
-    SORT --> TOP[Output<br/>Top 5 主播卡與 reason 證據]
-    EX2 --> TOP
-    TOP --> SUM[LLM 推薦摘要<br/>比較五位主播差異]
-    TOP --> CTRL[Result Controls<br/>找相似、換一位、換一批]
-    CTRL --> RERANK[沿用既有索引與向量重新排序]
-    RERANK --> TOP
+    CSV[上傳 CSV] --> PREP[Data Prepared<br/>驗證、標籤索引、主播 Embedding]
+    INPUT[使用者輸入] --> STATE[LLM Structure<br/>更新並清理 Preference State]
+    STATE --> WEB{需要外部知識?}
+    WEB -- 是 --> EXPAND[Web Search<br/>補充語意 query]
+    WEB -- 否 --> RETRIEVE[Hybrid Retrieval<br/>逐字搜尋、標籤、Embedding]
+    EXPAND --> RETRIEVE
+    PREP --> RETRIEVE
+    RETRIEVE --> CANDIDATE{有逐字或標籤候選?}
+    CANDIDATE -- 是 --> RANK[排除條件後排序<br/>逐字 → 標籤 → 語意]
+    CANDIDATE -- 否 --> SEMANTIC[純語意 fallback<br/>門檻 0.20]
+    RANK --> TOP[Top 5 主播卡與 reason 證據]
+    SEMANTIC --> TOP
+    TOP --> SUMMARY[LLM 推薦摘要]
+    TOP --> CONTROL[找相似、換一位、換一批]
+    CONTROL -- 本機重排 --> TOP
 ```
 
 ### Pairwise Explorer 流程
@@ -91,13 +67,11 @@ flowchart TD
 ```mermaid
 flowchart LR
     A[抽取兩位主播] --> B[使用者二選一]
-    B --> C[比較勝者與敗者標籤]
-    C --> D[更新累積偏好權重]
-    D --> E{完成五輪?}
-    E -- 否 --> A
-    E -- 是 --> F[依偏好權重排序全部主播]
-    F --> G[Pairwise Top 5 與推薦摘要]
-    G --> A
+    B --> C[比較差異標籤<br/>更新弱偏好]
+    C --> D{完成五輪?}
+    D -- 否 --> A
+    D -- 是 --> E[更新 Top 5 與摘要]
+    E --> A
 ```
 
 ## 快速執行
