@@ -1,0 +1,14 @@
+.venv/
+.uv-cache/
+.uv-python/
+__pycache__/
+*.py[cod]
+
+# API keys and local Streamlit secrets
+.env
+.streamlit/secrets.toml
+
+# Private source data and artifacts derived from it
+anchors_100.csv
+data_prepared/
+take-home-assignment.pdf

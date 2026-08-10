@@ -1,0 +1,4 @@
+openai
+numpy
+pandas
+streamlit==1.60.0
