@@ -45,21 +45,39 @@
 
 ```mermaid
 flowchart TD
-    CSV[上傳主播 CSV] --> PREP[整理資料並建立搜尋索引]
-    INPUT[使用者說出需求] --> STATE[LLM 整理偏好、排除與身分]
-    STATE --> WEB{需要查外部概念嗎?}
-    WEB -- 是 --> EXPAND[Web Search 補充概念特徵]
-    WEB -- 否 --> RETRIEVE[逐字、標籤與語意搜尋]
-    EXPAND --> RETRIEVE
-    PREP --> RETRIEVE
-    RETRIEVE --> CANDIDATE{有身分或標籤命中嗎?}
-    CANDIDATE -- 是 --> RANK[排除後依逐字、標籤、語意排序]
-    CANDIDATE -- 否 --> SEMANTIC[純語意推薦，門檻 0.20]
-    RANK --> TOP[顯示 Top 5 與推薦證據]
-    SEMANTIC --> TOP
-    TOP --> SUMMARY[補上推薦原因與選擇建議]
+    INPUT[使用者對話] --> ROUTER[LLM Router<br/>理解意圖並決定檢索路線]
+    ROUTER --> STATE[Conversation State<br/>preferences / excluded_preferences<br/>semantic_query / literal_queries]
+
+    CSV[主播 CSV] --> PREP[資料清理與索引建立]
+    PREP --> META[(主播 metadata / 標籤索引)]
+    PREP --> STREAMER_EMBED[(主播 Embedding Index)]
+
+    subgraph AGENT[Agent Tool Use]
+        direction LR
+        LITERAL{有 literal_queries?} -- 是 --> LITERAL_TOOL[Literal Search Tool<br/>搜尋姓名、帳號與 PFID]
+        WEB{需要外部知識?} -- 是 --> WEB_TOOL[Web Search Tool<br/>補充作品、角色與流行概念]
+    end
+
+    STATE --> LITERAL
+    STATE --> WEB
+    STATE --> TAG[標籤匹配<br/>計算 tag_score]
+    STATE --> SEMANTIC[組合 semantic_query]
+    WEB -- 否 --> SEMANTIC
+    WEB_TOOL -->|enriched traits| SEMANTIC
+    SEMANTIC --> QUERY_EMBED[Query Embedding<br/>計算 cosine vector_score]
+
+    META --> LITERAL_TOOL
+    META --> TAG
+    STREAMER_EMBED --> QUERY_EMBED
+
+    LITERAL_TOOL -->|literal_score| SCORE[Hybrid Scoring & Ranking<br/>literal_score + tag_score + vector_score<br/>套用排除條件與 fallback 門檻]
+    LITERAL -- 否 --> SCORE
+    TAG -->|tag_score| SCORE
+    QUERY_EMBED -->|vector_score| SCORE
+    SCORE --> TOP[Top 5 推薦與 metadata 證據]
+    TOP --> SUMMARY[LLM 產生推薦原因與選擇建議]
     TOP --> CONTROL[找相似、換一位、換一批]
-    CONTROL -- 重新調整結果 --> TOP
+    CONTROL -->|更新暫時結果狀態| SCORE
 ```
 
 ### Pairwise Explorer 流程
